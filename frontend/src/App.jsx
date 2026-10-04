@@ -29,9 +29,9 @@ export default function App() {
       <div className="chat-panel-outer">
         <div className="chat-heading">
           <h1>BMO — An Interactive Chatbot</h1>
-          <p>by anuragxg</p>
+          <p>by @anuragxg</p>
           <p className="model-credit">
-            3D model: "BMO Cute Model" by Lunar (Sketchfab), CC-BY-4.0
+           ___________________________________________________________________________________
           </p>
         </div>
 

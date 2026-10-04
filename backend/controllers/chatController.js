@@ -1,13 +1,9 @@
 import { Ollama } from "ollama";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { detectEmotion } from "./emotionEngine.js";
 
 const OLLAMA_HOST = process.env.OLLAMA_HOST || "http://localhost:11434";
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "llama3.2";
 const ollama = new Ollama({ host: OLLAMA_HOST });
-
-const geminiKey = process.env.GEMINI_API_KEY;
-const genAI = geminiKey ? new GoogleGenerativeAI(geminiKey) : null;
 
 const BMO_SYSTEM_PROMPT = `You are BMO, a small living game console who is cheerful, curious,
 a little literal-minded, and endlessly loyal. You speak in short, warm, playful sentences.
@@ -27,10 +23,19 @@ function cannedReply() {
   return CANNED_RESPONSES[Math.floor(Math.random() * CANNED_RESPONSES.length)];
 }
 
-let warnedOllamaOnce = false;
-let warnedGeminiOnce = false;
-
-async function tryOllama(userText, history) {
+/**
+ * Streams BMO's reply from the local Ollama model.
+ *
+ * - `history` is the PAST conversation only (do not include `userText` in it;
+ *   it's appended here as the final user turn).
+ * - `onToken(token)` is called for every chunk as the model generates it.
+ * - Resolves to { text, source } where source is "ollama" or "canned".
+ *
+ * If Ollama is unreachable (not installed / not running / model not pulled),
+ * resolves with a canned line instead, so the chat never breaks. The reason is
+ * logged on every failure so it's easy to spot in the terminal.
+ */
+export async function streamBmoReply(userText, history = [], onToken = () => {}) {
   const messages = [
     { role: "system", content: BMO_SYSTEM_PROMPT },
     ...history.slice(-10).map((m) => ({
@@ -40,64 +45,31 @@ async function tryOllama(userText, history) {
     { role: "user", content: userText },
   ];
 
-  const response = await ollama.chat({ model: OLLAMA_MODEL, messages, stream: false });
-  const text = response?.message?.content;
-  if (!text || !text.trim()) throw new Error("empty response from Ollama");
-  return text.trim();
-}
-
-async function tryGemini(userText, history) {
-  const model = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash",
-    systemInstruction: BMO_SYSTEM_PROMPT,
-  });
-
-  const mappedHistory = history.slice(-10).map((m) => ({
-    role: m.sender === "user" ? "user" : "model",
-    parts: [{ text: m.text }],
-  }));
-
-  const chat = model.startChat({ history: mappedHistory });
-  const result = await chat.sendMessage(userText);
-  const text = result.response.text();
-  if (!text || !text.trim()) throw new Error("empty response from Gemini");
-  return text.trim();
-}
-
-/**
- * Generates BMO's reply, trying Ollama (local) first, then Gemini (cloud)
- * if Ollama isn't reachable, then a canned response as the last resort.
- * This means the same code works great locally (free, private, no limits
- * via Ollama) and still works once deployed somewhere Ollama isn't installed
- * (falls through to Gemini automatically).
- */
-export async function generateBmoReply(userText, history = []) {
+  let full = "";
   try {
-    return await tryOllama(userText, history);
-  } catch (ollamaErr) {
-    if (!warnedOllamaOnce) {
-      warnedOllamaOnce = true;
-      console.error(`[chatController] Ollama unreachable at ${OLLAMA_HOST}: ${ollamaErr.message}`);
-      console.error("[chatController] (expected if Ollama isn't installed here, e.g. on a cloud host) Trying Gemini next...");
-    }
-  }
+    const stream = await ollama.chat({
+      model: OLLAMA_MODEL,
+      messages,
+      stream: true,
+      options: { num_predict: 200 }, // keep replies chat-bubble sized
+    });
 
-  if (genAI) {
-    try {
-      return await tryGemini(userText, history);
-    } catch (geminiErr) {
-      if (!warnedGeminiOnce) {
-        warnedGeminiOnce = true;
-        console.error("[chatController] Gemini API error:", geminiErr.message);
-        const isRateLimit = /429|quota|rate.?limit|resource_exhausted/i.test(geminiErr.message || "");
-        if (isRateLimit) {
-          console.error("[chatController] That's a rate-limit hit, not a real failure - back off request frequency.");
-        }
-      }
+    for await (const part of stream) {
+      const token = part?.message?.content ?? "";
+      if (!token) continue;
+      full += token;
+      onToken(token);
     }
-  }
 
-  return cannedReply();
+    if (!full.trim()) throw new Error("empty response from Ollama");
+    return { text: full.trim(), source: "ollama" };
+  } catch (err) {
+    console.error(`[chatController] Ollama failed (${OLLAMA_HOST}, model "${OLLAMA_MODEL}"): ${err.message}`);
+    console.error(`[chatController] Is Ollama running, and did you run: ollama pull ${OLLAMA_MODEL} ?`);
+    // If the stream died midway, keep what was already shown to the user.
+    if (full.trim()) return { text: full.trim(), source: "ollama" };
+    return { text: cannedReply(), source: "canned" };
+  }
 }
 
 export function classifyEmotion(text) {

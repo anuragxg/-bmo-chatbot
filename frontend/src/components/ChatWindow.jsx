@@ -63,7 +63,7 @@ export default function ChatWindow({ messages, isThinking, connected, onSend }) 
           <div className="msg-row bmo">
             <div className="msg-group bmo">
               <div className="msg-bubble bmo">
-                Hi hi! BMO is here! Say something and BMO will react~
+                Hi! BMO is here! Say something and I'll react~
               </div>
             </div>
           </div>

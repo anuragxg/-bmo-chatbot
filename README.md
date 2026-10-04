@@ -9,10 +9,9 @@ and reacts with emotions as you chat.
 - **Frontend**: React + Vite, `@react-three/fiber` / `@react-three/drei` (Three.js) for the
   3D character, `@react-three/postprocessing` for bloom/vignette, GSAP for choreographed
   gestures, Framer Motion for chat UI animation, Socket.IO client for real-time chat.
-- **Backend**: Node.js + Express + Socket.IO, MongoDB (Mongoose) for chat history,
-  Ollama (local LLM, tried first) falling through to Gemini API (cloud, used automatically
-  once deployed) for the bot's replies, with a canned-response fallback if neither works
-  if no API key is set.
+- **Backend**: Node.js + Express + Socket.IO, MongoDB (Mongoose) for chat history, and
+  **Ollama** (a local LLM, no API key) for the bot's replies, streamed token-by-token to
+  the browser. If Ollama isn't reachable, BMO falls back to canned lines and logs why.
 
 ## How it works
 
@@ -33,8 +32,10 @@ and reacts with emotions as you chat.
 - Every message you send is run through a lightweight keyword-based emotion classifier
   (`backend/controllers/emotionEngine.js`) - this drives BMO's live reaction before the
   reply even streams back, plus classifies BMO's own reply for its expression.
-- Socket.IO handles three events: `user_message` (you → server), `bmo_reaction`
-  (immediate emotion ping), and `bmo_message` (the final reply + emotion).
+- Socket.IO events: `user_message` (you → server), `bmo_reaction` (immediate emotion
+  ping), `bmo_token` (one chunk of BMO's reply as the local LLM generates it, so text
+  appears live), and `bmo_message` (the final reply + emotion, which replaces the
+  streaming bubble).
 
 ## Screen Display
 
@@ -144,57 +145,36 @@ Frontend runs on `http://localhost:5173`. Open it in your browser and start chat
 
 ## Deployment
 
-Ollama needs real local compute (RAM/CPU/GPU), so it can't run on typical free
-cloud hosting - which is exactly why the chat controller tries Ollama first,
-then automatically falls through to Gemini. For a public link, you'll deploy
-the app normally and let it use Gemini in production (Ollama simply won't be
-reachable there, and the code handles that gracefully).
+BMO uses a local model, so the **backend has to run on a machine with Ollama** - cloud
+free tiers can't run an LLM. That still leaves two good ways to share it, both free and
+with no API:
 
-### 1. Database - MongoDB Atlas (free)
-Already covered above. Make sure you have your `MONGO_URI` connection string.
+**Option A - Demo mode (simplest).** Run everything locally and record a short demo
+video/GIF for your README and LinkedIn. Deploy only the frontend if you like; the live
+link will show BMO offline unless your backend is reachable.
 
-### 2. Chat brain for production - Gemini (free)
-Get a key at **aistudio.google.com** (no card needed). You'll set this as an
-environment variable on your hosting provider, not in a committed `.env` file.
+**Option B - Live link from your own machine.** Deploy the frontend, and expose your
+local backend through a free tunnel:
 
-### 3. Backend - Render or Railway (free tier)
-1. Push this project to a GitHub repo
-2. On Render: New → Web Service → connect the repo → set **root directory** to
-   `backend` → build command `npm install` → start command `npm start`
-3. Add environment variables in Render's dashboard (not a `.env` file):
-   - `MONGO_URI` - your Atlas connection string
-   - `GEMINI_API_KEY` - your Gemini key
-   - `CLIENT_ORIGIN` - your frontend's URL (you'll get this in step 4 - you
-     can come back and update it after)
-4. Deploy - you'll get a URL like `https://bmo-backend.onrender.com`
+1. Start Ollama, MongoDB (or an Atlas free cluster) and the backend (`npm start`)
+2. Install `cloudflared` and run `cloudflared tunnel --url http://localhost:5000` -
+   it prints a public `https://....trycloudflare.com` URL (WebSockets work through it)
+3. Deploy the frontend (Vercel/Netlify): base directory `frontend`, build command
+   `npm run build`, publish directory `frontend/dist`, and set
+   `VITE_SERVER_URL` to the tunnel URL **before** building (Vite bakes it in)
+4. Set `CLIENT_ORIGIN` in `backend/.env` to your deployed frontend URL and restart the
+   backend (CORS)
 
-**Free-tier heads-up**: Render's free web services spin down after inactivity
-and take ~30-60 seconds to wake up on the next request. Fine for a portfolio
-project, just don't be surprised by the first message being slow after the
-link's been idle a while.
-
-### 4. Frontend - Netlify or Vercel
-1. Locally: this needs a production build, not the raw source -
-   `cd frontend && npm run build` creates a `dist/` folder
-2. On Netlify: either drag-and-drop that `dist/` folder, or (better) connect
-   the GitHub repo and set: base directory `frontend`, build command
-   `npm run build`, publish directory `frontend/dist`
-3. Add an environment variable: `VITE_SERVER_URL` = your Render backend URL
-   from step 3. Vite bakes env vars in at build time, so set this *before*
-   building/deploying, not after.
-4. Deploy - you'll get your public link here
-
-### 5. Wire them together
-Go back to Render and update `CLIENT_ORIGIN` to your actual Netlify URL (for
-CORS), then redeploy the backend. Test the full flow on the public link.
+The link only works while your machine, Ollama and the tunnel are running - which is the
+trade-off of zero API cost.
 
 ## Extending this project
 
 Some natural next steps if you want to build this out further for your portfolio:
 
-- Swap the canned-response fallback for a smaller local model if you want zero API cost.
+- Add RAG memory: embed past chats with a local embedding model (e.g. `nomic-embed-text` via Ollama) and retrieve relevant context before each reply.
 - Add more emotion states (e.g. "excited", "confused") and expand the keyword lexicon,
   or replace it with a real sentiment analysis model.
 - Persist per-user sessions with actual auth instead of a random session ID.
 - Add voice input/output (Web Speech API) so you can talk to BMO out loud.
-- Deploy: frontend to Vercel/Netlify, backend to Render/Railway, DB to MongoDB Atlas.
+- Add Whisper (speech-to-text) and Piper (text-to-speech) for a fully local voice pipeline.

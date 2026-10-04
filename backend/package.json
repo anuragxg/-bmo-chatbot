@@ -1,7 +1,7 @@
 {
   "name": "bmo-chatbot-backend",
   "version": "1.0.0",
-  "description": "Backend for BMO Interactive Chatbot - Express + Socket.IO + MongoDB + Claude API",
+  "description": "Backend for BMO Interactive Chatbot - Express + Socket.IO + MongoDB + local LLM (Ollama), streamed token-by-token",
   "main": "server.js",
   "type": "module",
   "scripts": {
@@ -14,8 +14,7 @@
     "cors": "^2.8.5",
     "mongoose": "^8.5.0",
     "dotenv": "^16.4.5",
-    "ollama": "^0.5.9",
-    "@google/generative-ai": "^0.21.0"
+    "ollama": "^0.5.9"
   },
   "devDependencies": {
     "nodemon": "^3.1.4"

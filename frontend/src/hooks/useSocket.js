@@ -38,11 +38,31 @@ export function useSocket() {
       setIsThinking(phase === "thinking");
     });
 
+    // Streaming: tokens arrive one by one while the local LLM generates.
+    // The first token creates BMO's bubble; later tokens append to it.
+    socket.on("bmo_token", ({ token }) => {
+      setIsThinking(false);
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (last?.streaming) {
+          return [...prev.slice(0, -1), { ...last, text: last.text + token }];
+        }
+        return [...prev, { sender: "bmo", text: token, streaming: true, createdAt: new Date() }];
+      });
+    });
+
+    // Final message: replaces the streaming bubble with the complete reply
+    // (or is appended as-is for canned replies, which never stream).
     socket.on("bmo_message", (msg) => {
       setIsThinking(false);
       setEmotion(msg.emotion);
       setChatReceivedSignal((n) => n + 1);
-      setMessages((prev) => [...prev, { sender: "bmo", ...msg }]);
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        const final = { sender: "bmo", ...msg };
+        if (last?.streaming) return [...prev.slice(0, -1), final];
+        return [...prev, final];
+      });
     });
 
     // Load prior history for this session, if the backend/db is available

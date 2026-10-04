@@ -7,7 +7,7 @@ import { Server } from "socket.io";
 import { connectDB } from "./config/db.js";
 import Message from "./models/Message.js";
 import chatRoutes from "./routes/chatRoutes.js";
-import { generateBmoReply, classifyEmotion } from "./controllers/chatController.js";
+import { streamBmoReply, classifyEmotion } from "./controllers/chatController.js";
 
 const PORT = process.env.PORT || 5000;
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || "http://localhost:5173";
@@ -23,7 +23,7 @@ const io = new Server(server, {
   cors: { origin: CLIENT_ORIGIN, methods: ["GET", "POST"] },
 });
 
-// In-memory recent history per session, used as context for Claude calls.
+// In-memory recent history per session, used as context for the LLM.
 // (Full history still persists to MongoDB regardless.)
 const sessionHistory = new Map();
 
@@ -53,16 +53,19 @@ io.on("connection", (socket) => {
       .catch((e) => console.error("[db] save user msg failed:", e.message));
 
     const history = sessionHistory.get(sessionId) || [];
-    history.push({ sender: "user", text });
 
     // Let BMO "think" briefly before replying (drives a thinking animation client-side)
     io.to(sessionId).emit("bmo_reaction", { emotion: "thinking", phase: "thinking" });
 
-    const replyText = await generateBmoReply(text, history);
+    // Stream the reply: every token is pushed to the client as it's generated.
+    // `history` is the PAST conversation; the new user message is added inside.
+    const { text: replyText, source } = await streamBmoReply(text, history, (token) => {
+      io.to(sessionId).emit("bmo_token", { token });
+    });
     const replyEmotion = classifyEmotion(replyText);
 
-    history.push({ sender: "bmo", text: replyText });
-    sessionHistory.set(sessionId, history);
+    history.push({ sender: "user", text }, { sender: "bmo", text: replyText });
+    sessionHistory.set(sessionId, history.slice(-20)); // cap memory per session
 
     new Message({
       sessionId,
@@ -76,6 +79,7 @@ io.on("connection", (socket) => {
     io.to(sessionId).emit("bmo_message", {
       text: replyText,
       emotion: replyEmotion,
+      source,
       createdAt: new Date(),
     });
   });
